@@ -34,10 +34,19 @@ func New(getter func(string) Cacheable) Cache {
 
 // Type lazycache implements the Cache interface
 type lazycache struct {
-	Getter           func(string) Cacheable
-	Cache            map[string]*Cacheable
-	ReadControls     map[string]*sync.Once
-	CacheLock        *sync.RWMutex
+	// The fetcher of items
+	Getter func(string) Cacheable
+
+	// The cache of items
+	Cache map[string]*Cacheable
+
+	// Controls read of items from the getter; prevents multiple concurrent reads of the same item.
+	ReadControls map[string]*sync.Once
+
+	// Locks the entire cache for reads or writes
+	CacheLock *sync.RWMutex
+
+	// Locks the read control manifest for reads or writes
 	ReadControlsLock *sync.RWMutex
 }
 
