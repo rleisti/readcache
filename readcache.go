@@ -11,12 +11,14 @@ TODO: Add a test for concurrent performance
 package readcache
 
 import (
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
 
-// Type Cacheable is something that may be stored in a cache
-type Cacheable struct {
+// Type cacheable is something that may be stored in a cache
+type cacheable struct {
 	// The item in the cache
 	Value interface{}
 
@@ -28,21 +30,22 @@ type Cacheable struct {
 type Cache interface {
 	// Retrieve an item from the cache if available, or from a
 	// backing source if it is not.
-	Get(key string) interface{}
+	// May return an error instead, if the item cannot be fetched.
+	Get(key string) (interface{}, error)
 }
 
 // Constructs a new cache
-func New(getter func(string) Cacheable) Cache {
-	return &readcache{getter, make(map[string]*Cacheable), make(map[string]*sync.Once), new(sync.RWMutex), new(sync.RWMutex)}
+func New(getter func(string) (interface{}, time.Time, error)) Cache {
+	return &readcache{getter, make(map[string]*cacheable), make(map[string]*sync.Once), new(sync.RWMutex), new(sync.RWMutex)}
 }
 
 // Type readcache implements the Cache interface
 type readcache struct {
 	// The fetcher of items
-	Getter func(string) Cacheable
+	Getter func(string) (interface{}, time.Time, error)
 
 	// The cache of items
-	Cache map[string]*Cacheable
+	Cache map[string]*cacheable
 
 	// Controls read of items from the getter; prevents multiple concurrent reads of the same item.
 	ReadControls map[string]*sync.Once
@@ -58,24 +61,24 @@ type readcache struct {
 // This implemention is meant to be goroutine safe.  It assumes that updating a
 // map while concurrently reading from it is unsafe, so it uses a read/write mutex
 // to synchronize access to its internal maps.
-func (c *readcache) Get(key string) interface{} {
+func (c *readcache) Get(key string) (interface{}, error) {
 	cachedValue, ok := getFromCache(c, key)
 	if ok {
-		return cachedValue.Value
+		return cachedValue.Value, nil
 	}
 
 	readControl, cachedValue, ok := getReadControl(c, key)
 	if ok {
-		return cachedValue.Value
+		return cachedValue.Value, nil
 	}
 
-	cachedValue = doFetch(c, key, readControl)
-	return cachedValue.Value
+	cachedValue, err := doFetch(c, key, readControl)
+	return cachedValue.Value, err
 }
 
 // Attempt to retrieve an item from the cache, if it exists and hasn't expired.
 // Returns somevalue, true if exists or nil, false if it does not.
-func getFromCache(c *readcache, key string) (*Cacheable, bool) {
+func getFromCache(c *readcache, key string) (*cacheable, bool) {
 	c.CacheLock.RLock()
 	cachedValue, ok := c.Cache[key]
 	c.CacheLock.RUnlock()
@@ -102,7 +105,7 @@ func getFromCache(c *readcache, key string) (*Cacheable, bool) {
 // the cache before a lock is acquired, so this function may return a cached
 // value instead.  If so, the third return value will be true.  Otherwise, a
 // read control is returned and the third value is false.
-func getReadControl(c *readcache, key string) (readControl *sync.Once, cachedItem *Cacheable, gotCachedItem bool) {
+func getReadControl(c *readcache, key string) (readControl *sync.Once, cachedItem *cacheable, gotCachedItem bool) {
 	gotCachedItem = false
 
 	c.ReadControlsLock.RLock()
@@ -142,7 +145,7 @@ func getReadControl(c *readcache, key string) (readControl *sync.Once, cachedIte
 // The read control may prevent this goroutine from fetching the value if
 // some other routine gets to it first.  In either case, the resulting
 // fetched value is returned.
-func doFetch(c *readcache, key string, readControl *sync.Once) (cachedValue *Cacheable) {
+func doFetch(c *readcache, key string, readControl *sync.Once) (cachedValue *cacheable, err error) {
 	fetchedValue := false
 	readControl.Do(func() {
 		defer func() {
@@ -151,18 +154,26 @@ func doFetch(c *readcache, key string, readControl *sync.Once) (cachedValue *Cac
 			c.ReadControlsLock.Unlock()
 		}()
 
-		valueFromGetter := c.Getter(key)
-		cachedValue = &valueFromGetter
+		value, expiresAt, err := c.Getter(key)
 		fetchedValue = true
-		c.CacheLock.Lock()
-		c.Cache[key] = cachedValue
-		c.CacheLock.Unlock()
+		if err == nil {
+			cachedValue = &cacheable{value, expiresAt}
+			c.CacheLock.Lock()
+			c.Cache[key] = cachedValue
+			c.CacheLock.Unlock()
+		}
 	})
 
 	if !fetchedValue {
+		ok := false
 		c.CacheLock.RLock()
-		cachedValue, _ = c.Cache[key]
+		cachedValue, ok = c.Cache[key]
 		c.CacheLock.RUnlock()
+
+		// An error may have occured during the fetch; if so then retry.
+		if !ok {
+			err = errors.New(fmt.Sprintf("An error occured during a concurrent fetch for '%s'", key))
+		}
 	}
 
 	return

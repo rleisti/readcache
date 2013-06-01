@@ -8,15 +8,13 @@ import (
 )
 
 func TestGet_Once_WithNilValue_ShouldReturnNil(t *testing.T) {
-	item := newItem(nil)
-	cache := New(func(key string) Cacheable { return item })
+	cache := New(func(key string) (interface{}, time.Time, error) { return nil, time.Now().Add(100e9), nil })
 	cache.Get("key")
 }
 
 func TestGet_Once_WithSomeValue_ShouldReturnValue(t *testing.T) {
-	item := newItem("foo")
-	cache := New(func(key string) Cacheable { return item })
-	result := cache.Get("key")
+	cache := New(func(key string) (interface{}, time.Time, error) { return "foo", time.Now().Add(100e9), nil })
+	result, _ := cache.Get("key")
 	if result == nil {
 		t.Error("Something should have been returned.")
 	}
@@ -26,10 +24,9 @@ func TestGet_Once_WithSomeValue_ShouldReturnValue(t *testing.T) {
 }
 
 func TestGet_Twice_WithSomeValue_ShouldReturnValue(t *testing.T) {
-	item := newItem("foo")
-	cache := New(func(key string) Cacheable { return item })
+	cache := New(func(key string) (interface{}, time.Time, error) { return "foo", time.Now().Add(100e9), nil })
 	cache.Get("key")
-	result := cache.Get("key")
+	result, _ := cache.Get("key")
 	if result == nil {
 		t.Error("Something should have been returned.")
 	}
@@ -39,11 +36,10 @@ func TestGet_Twice_WithSomeValue_ShouldReturnValue(t *testing.T) {
 }
 
 func TestGet_Twice_WithSomeValue_ShouldNotFetchTwice(t *testing.T) {
-	item := newItem("foo")
 	fetchCount := 0
-	getter := func(key string) Cacheable {
+	getter := func(key string) (interface{}, time.Time, error) {
 		fetchCount++
-		return item
+		return "foo", time.Now().Add(100e9), nil
 	}
 	cache := New(getter)
 	cache.Get("key")
@@ -54,11 +50,11 @@ func TestGet_Twice_WithSomeValue_ShouldNotFetchTwice(t *testing.T) {
 }
 
 func TestGet_Twice_WithExpiration_ShouldFetchTwice(t *testing.T) {
-	item := Cacheable{Value: "foo", ExpiresAt: time.Now().Add(-1)}
+	expiresAt := time.Now().Add(-1)
 	fetchCount := 0
-	getter := func(key string) Cacheable {
+	getter := func(key string) (interface{}, time.Time, error) {
 		fetchCount++
-		return item
+		return "foo", expiresAt, nil
 	}
 	cache := New(getter)
 	cache.Get("key")
@@ -69,14 +65,13 @@ func TestGet_Twice_WithExpiration_ShouldFetchTwice(t *testing.T) {
 }
 
 func TestGet_ConcurrentReads_WithLongExpiration_ShouldFetchOncePerKey(t *testing.T) {
-
 	fetchLock := new(sync.Mutex)
 	fetchCount := 0
-	getter := func(key string) Cacheable {
+	getter := func(key string) (interface{}, time.Time, error) {
 		fetchLock.Lock()
 		fetchCount++
 		fetchLock.Unlock()
-		return newItem("foo")
+		return "foo", time.Now().Add(100e9), nil
 	}
 	cache := New(getter)
 
@@ -92,15 +87,15 @@ func TestGet_ConcurrentReads_StartingWithExpiredItems_ShouldFetchOncePerKey(t *t
 	prime := true
 	expiresAt := time.Now().Add(-1)
 	fetchCount := 0
-	getter := func(key string) Cacheable {
+	getter := func(key string) (interface{}, time.Time, error) {
 		if prime {
-			return Cacheable{Value: "foo", ExpiresAt: expiresAt}
+			return "foo", expiresAt, nil
 		} else {
 			fetchLock.Lock()
 			fetchCount++
 			fetchLock.Unlock()
 		}
-		return newItem("foo")
+		return "foo", time.Now().Add(100e9), nil
 	}
 	cache := New(getter)
 
@@ -135,10 +130,4 @@ func runConcurrencyTestWithSingleFetch(t *testing.T, cache Cache, numKeys int) {
 	for r := 0; r < numGoroutines; r++ {
 		<-quit
 	}
-}
-
-// Constructs a new item with the given value, which is not expected to expire
-// soon.
-func newItem(value interface{}) Cacheable {
-	return Cacheable{Value: value, ExpiresAt: time.Now().Add(100e9)}
 }
