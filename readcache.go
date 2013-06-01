@@ -29,13 +29,13 @@ type Cache interface {
 
 // Constructs a new cache
 func New(getter func(string) Cacheable) Cache {
-	return &lazycache{getter, make(map[string]Cacheable), make(map[string]*sync.Once), new(sync.RWMutex), new(sync.RWMutex)}
+	return &lazycache{getter, make(map[string]*Cacheable), make(map[string]*sync.Once), new(sync.RWMutex), new(sync.RWMutex)}
 }
 
 // Type lazycache implements the Cache interface
 type lazycache struct {
 	Getter           func(string) Cacheable
-	Cache            map[string]Cacheable
+	Cache            map[string]*Cacheable
 	ReadControls     map[string]*sync.Once
 	CacheLock        *sync.RWMutex
 	ReadControlsLock *sync.RWMutex
@@ -60,7 +60,9 @@ func (c *lazycache) Get(key string) interface{} {
 	return cachedValue.Value
 }
 
-func getFromCache(c *lazycache, key string) (Cacheable, bool) {
+// Attempt to retrieve an item from the cache, if it exists and hasn't expired.
+// Returns somevalue, true if exists or nil, false if it does not.
+func getFromCache(c *lazycache, key string) (*Cacheable, bool) {
 	c.CacheLock.RLock()
 	cachedValue, ok := c.Cache[key]
 	c.CacheLock.RUnlock()
@@ -78,10 +80,15 @@ func getFromCache(c *lazycache, key string) (Cacheable, bool) {
 		delete(c.Cache, key)
 		c.CacheLock.Unlock()
 	}
-	return Cacheable{nil, time.Now()}, false
+	return nil, false
 }
 
-func getReadControl(c *lazycache, key string) (readControl *sync.Once, cachedItem Cacheable, gotCachedItem bool) {
+// Get a Once for controlling the read-through on a particular cached item.
+// Performs a last-minute check to determine if another goroutine has populated
+// the cache before a lock is acquired, so this function may return a cached
+// value instead.  If so, the third return value will be true.  Otherwise, a
+// read control is returned and the third value is false.
+func getReadControl(c *lazycache, key string) (readControl *sync.Once, cachedItem *Cacheable, gotCachedItem bool) {
 	gotCachedItem = false
 
 	c.ReadControlsLock.RLock()
@@ -117,7 +124,11 @@ func getReadControl(c *lazycache, key string) (readControl *sync.Once, cachedIte
 	return
 }
 
-func doFetch(c *lazycache, key string, readControl *sync.Once) (cachedValue Cacheable) {
+// Use the given read control to fetch a value and store it in the cache.
+// The read control may prevent this goroutine from fetching the value if
+// some other routine gets to it first.  In either case, the resulting
+// fetched value is returned.
+func doFetch(c *lazycache, key string, readControl *sync.Once) (cachedValue *Cacheable) {
 	fetchedValue := false
 	readControl.Do(func() {
 		defer func() {
@@ -126,7 +137,8 @@ func doFetch(c *lazycache, key string, readControl *sync.Once) (cachedValue Cach
 			c.ReadControlsLock.Unlock()
 		}()
 
-		cachedValue = c.Getter(key)
+		valueFromGetter := c.Getter(key)
+		cachedValue = &valueFromGetter
 		fetchedValue = true
 		c.CacheLock.Lock()
 		c.Cache[key] = cachedValue
