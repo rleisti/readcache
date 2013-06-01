@@ -75,6 +75,7 @@ func getFromCache(c *lazycache, key string) (*Cacheable, bool) {
 		// Determine if another goroutine has updated the cache before the lock
 		cachedValue, ok = c.Cache[key]
 		if ok && cachedValue.ExpiresAt.After(now) {
+			c.CacheLock.Unlock()
 			return cachedValue, true
 		}
 		delete(c.Cache, key)
