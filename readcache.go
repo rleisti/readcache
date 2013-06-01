@@ -25,9 +25,6 @@ type Cache interface {
 	// Retrieve an item from the cache if available, or from a
 	// backing source if it is not.
 	Get(key string) interface{}
-
-	// Forcibly expire a particular item from the cache, if it exists.
-	Expire(key string)
 }
 
 // Constructs a new cache
@@ -120,18 +117,3 @@ func (c *lazycache) Get(key string) interface{} {
 	return cachedValue.Value
 }
 
-func getFromCache(c *lazycache, key string) (value Cacheable, ok bool) {
-	c.CacheLock.RLock()
-	defer func() {
-		c.CacheLock.RUnlock()
-	}()
-
-	value, ok = c.Cache[key]
-	return
-}
-
-func (c *lazycache) Expire(key string) {
-	c.CacheLock.Lock()
-	delete(c.Cache, key)
-	c.CacheLock.Unlock()
-}
