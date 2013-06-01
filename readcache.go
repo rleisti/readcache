@@ -56,27 +56,7 @@ func (c *lazycache) Get(key string) interface{} {
 		return cachedValue.Value
 	}
 
-	fetchedValue := false
-	readControl.Do(func() {
-		defer func() {
-			c.ReadControlsLock.Lock()
-			delete(c.ReadControls, key)
-			c.ReadControlsLock.Unlock()
-		}()
-
-		cachedValue = c.Getter(key)
-		fetchedValue = true
-		c.CacheLock.Lock()
-		c.Cache[key] = cachedValue
-		c.CacheLock.Unlock()
-	})
-
-	if !fetchedValue {
-		c.CacheLock.RLock()
-		cachedValue, _ = c.Cache[key]
-		c.CacheLock.RUnlock()
-	}
-
+	cachedValue = doFetch(c, key, readControl)
 	return cachedValue.Value
 }
 
@@ -132,6 +112,31 @@ func getReadControl(c *lazycache, key string) (readControl *sync.Once, cachedIte
 			c.ReadControls[key] = readControl
 		}
 		c.ReadControlsLock.Unlock()
+	}
+
+	return
+}
+
+func doFetch(c *lazycache, key string, readControl *sync.Once) (cachedValue Cacheable) {
+	fetchedValue := false
+	readControl.Do(func() {
+		defer func() {
+			c.ReadControlsLock.Lock()
+			delete(c.ReadControls, key)
+			c.ReadControlsLock.Unlock()
+		}()
+
+		cachedValue = c.Getter(key)
+		fetchedValue = true
+		c.CacheLock.Lock()
+		c.Cache[key] = cachedValue
+		c.CacheLock.Unlock()
+	})
+
+	if !fetchedValue {
+		c.CacheLock.RLock()
+		cachedValue, _ = c.Cache[key]
+		c.CacheLock.RUnlock()
 	}
 
 	return
