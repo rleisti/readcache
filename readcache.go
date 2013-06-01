@@ -46,22 +46,9 @@ type lazycache struct {
 // map while concurrently reading from it is unsafe, so it uses a read/write mutex
 // to synchronize access to its internal maps.
 func (c *lazycache) Get(key string) interface{} {
-	c.CacheLock.RLock()
-	cachedValue, ok := c.Cache[key]
-	c.CacheLock.RUnlock()
+	cachedValue, ok := getFromCache(c, key)
 	if ok {
-		now := time.Now()
-		if cachedValue.ExpiresAt.After(now) {
-			return cachedValue.Value
-		}
-		c.CacheLock.Lock()
-		// Determine if another goroutine has updated the cache before the lock
-		cachedValue, ok = c.Cache[key]
-		if ok && cachedValue.ExpiresAt.After(now) {
-			return cachedValue
-		}
-		delete(c.Cache, key)
-		c.CacheLock.Unlock()
+		return cachedValue.Value
 	}
 
 	c.ReadControlsLock.RLock()
@@ -116,4 +103,26 @@ func (c *lazycache) Get(key string) interface{} {
 
 	return cachedValue.Value
 }
+
+func getFromCache(c *lazycache, key string) (Cacheable, bool) {
+	c.CacheLock.RLock()
+	cachedValue, ok := c.Cache[key]
+	c.CacheLock.RUnlock()
+	if ok {
+		now := time.Now()
+		if cachedValue.ExpiresAt.After(now) {
+			return cachedValue, true
+		}
+		c.CacheLock.Lock()
+		// Determine if another goroutine has updated the cache before the lock
+		cachedValue, ok = c.Cache[key]
+		if ok && cachedValue.ExpiresAt.After(now) {
+			return cachedValue, true
+		}
+		delete(c.Cache, key)
+		c.CacheLock.Unlock()
+	}
+	return Cacheable {nil, time.Now()}, false
+}
+
 

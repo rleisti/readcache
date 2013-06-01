@@ -2,9 +2,9 @@ package readcache
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
-	"sync"
 )
 
 func TestGet_Once_WithNilValue_ShouldReturnNil(t *testing.T) {
