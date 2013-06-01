@@ -69,9 +69,6 @@ func TestGet_Twice_WithExpiration_ShouldFetchTwice(t *testing.T) {
 }
 
 func TestGet_ConcurrentReads_WithLongExpiration_ShouldFetchOncePerKey(t *testing.T) {
-	numGoroutines := 32
-	numKeys := 512
-	numFetchesPerGoroutine := 2048
 
 	fetchLock := new(sync.Mutex)
 	fetchCount := 0
@@ -82,31 +79,15 @@ func TestGet_ConcurrentReads_WithLongExpiration_ShouldFetchOncePerKey(t *testing
 		return newItem("foo")
 	}
 	cache := New(getter)
-	quit := make(chan bool)
-	for r := 0; r < numGoroutines; r++ {
-		seed := r
-		go func() {
-			for i := 0; i < numFetchesPerGoroutine; i++ {
-				keyNum := ((i + 1) * seed) % numKeys
-				key := fmt.Sprintf("%d", keyNum)
-				cache.Get(key)
-			}
-			quit <- true
-		}()
-	}
-	for r := 0; r < numGoroutines; r++ {
-		<-quit
-	}
+
+	numKeys := 32
+	runConcurrencyTestWithSingleFetch(t, cache, numKeys)
 	if fetchCount != numKeys {
 		t.Errorf("Should have fetched %d times, but got %d", numKeys, fetchCount)
 	}
 }
 
 func TestGet_ConcurrentReads_StartingWithExpiredItems_ShouldFetchOncePerKey(t *testing.T) {
-	numGoroutines := 32
-	numKeys := 512
-	numFetchesPerGoroutine := 2048
-
 	fetchLock := new(sync.Mutex)
 	prime := true
 	expiresAt := time.Now().Add(-1)
@@ -123,10 +104,21 @@ func TestGet_ConcurrentReads_StartingWithExpiredItems_ShouldFetchOncePerKey(t *t
 	}
 	cache := New(getter)
 
+	numKeys := 32
 	for i := 0; i < numKeys; i++ {
 		cache.Get(fmt.Sprintf("%d", i))
 	}
 	prime = false
+
+	runConcurrencyTestWithSingleFetch(t, cache, numKeys)
+	if fetchCount != numKeys {
+		t.Errorf("Should have fetched %d times, but got %d", numKeys, fetchCount)
+	}
+}
+
+func runConcurrencyTestWithSingleFetch(t *testing.T, cache Cache, numKeys int) {
+	numGoroutines := 32
+	numFetchesPerGoroutine := numKeys * 4
 
 	quit := make(chan bool)
 	for r := 0; r < numGoroutines; r++ {
@@ -142,9 +134,6 @@ func TestGet_ConcurrentReads_StartingWithExpiredItems_ShouldFetchOncePerKey(t *t
 	}
 	for r := 0; r < numGoroutines; r++ {
 		<-quit
-	}
-	if fetchCount != numKeys {
-		t.Errorf("Should have fetched %d times, but got %d", numKeys, fetchCount)
 	}
 }
 
