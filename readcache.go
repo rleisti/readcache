@@ -51,33 +51,9 @@ func (c *lazycache) Get(key string) interface{} {
 		return cachedValue.Value
 	}
 
-	c.ReadControlsLock.RLock()
-	readControl, ok := c.ReadControls[key]
-	c.ReadControlsLock.RUnlock()
-	if !ok {
-		c.ReadControlsLock.Lock()
-
-		// Another goroutine may have created a read control, fetched an item, updated the
-		// cache and cleaned up its read control by the time we reach this point.
-		// Therefore, we verify that the cache still does not contain anything for the
-		// given key.
-		// Warning: possibility of deadlock when dealing with multiple locks.  Make sure
-		//          they are always acquired in the same order.
-		c.CacheLock.RLock()
-		cachedValue, ok := c.Cache[key]
-		c.CacheLock.RUnlock()
-
-		if ok {
-			c.ReadControlsLock.Unlock()
-			return cachedValue.Value
-		}
-
-		readControl, ok = c.ReadControls[key]
-		if !ok {
-			readControl = new(sync.Once)
-			c.ReadControls[key] = readControl
-		}
-		c.ReadControlsLock.Unlock()
+	readControl, cachedValue, ok := getReadControl(c, key)
+	if ok {
+		return cachedValue.Value
 	}
 
 	fetchedValue := false
@@ -122,7 +98,41 @@ func getFromCache(c *lazycache, key string) (Cacheable, bool) {
 		delete(c.Cache, key)
 		c.CacheLock.Unlock()
 	}
-	return Cacheable {nil, time.Now()}, false
+	return Cacheable{nil, time.Now()}, false
 }
 
+func getReadControl(c *lazycache, key string) (readControl *sync.Once, cachedItem Cacheable, gotCachedItem bool) {
+	gotCachedItem = false
 
+	c.ReadControlsLock.RLock()
+	readControl, ok := c.ReadControls[key]
+	c.ReadControlsLock.RUnlock()
+	if !ok {
+		c.ReadControlsLock.Lock()
+
+		// Another goroutine may have created a read control, fetched an item, updated the
+		// cache and cleaned up its read control by the time we reach this point.
+		// Therefore, we verify that the cache still does not contain anything for the
+		// given key.
+		// Warning: possibility of deadlock when dealing with multiple locks.  Make sure
+		//          they are always acquired in the same order.
+		c.CacheLock.RLock()
+		cachedItem, ok = c.Cache[key]
+		c.CacheLock.RUnlock()
+
+		if ok {
+			c.ReadControlsLock.Unlock()
+			gotCachedItem = true
+			return
+		}
+
+		readControl, ok = c.ReadControls[key]
+		if !ok {
+			readControl = new(sync.Once)
+			c.ReadControls[key] = readControl
+		}
+		c.ReadControlsLock.Unlock()
+	}
+
+	return
+}
