@@ -2,8 +2,6 @@
 Package readcache implements a read-through cache where the caller supplies
 the means to read-through in the form of a function.
 
-TODO: Add a test for concurrent item expiration
-
 TODO: Add a mechanism for allowing the getter to return an error instead of an item
 
 TODO: Add a maximum size; enforce with an LRU algorithm

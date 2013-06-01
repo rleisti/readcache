@@ -102,6 +102,52 @@ func TestGet_ConcurrentReads_WithLongExpiration_ShouldFetchOncePerKey(t *testing
 	}
 }
 
+func TestGet_ConcurrentReads_StartingWithExpiredItems_ShouldFetchOncePerKey(t *testing.T) {
+	numGoroutines := 32
+	numKeys := 512
+	numFetchesPerGoroutine := 2048
+
+	fetchLock := new(sync.Mutex)
+	prime := true
+	expiresAt := time.Now().Add(-1)
+	fetchCount := 0
+	getter := func(key string) Cacheable {
+		if prime {
+			return Cacheable{Value: "foo", ExpiresAt: expiresAt}
+		} else {
+			fetchLock.Lock()
+			fetchCount++
+			fetchLock.Unlock()
+		}
+		return newItem("foo")
+	}
+	cache := New(getter)
+
+	for i := 0; i < numKeys; i++ {
+		cache.Get(fmt.Sprintf("%d", i))
+	}
+	prime = false
+
+	quit := make(chan bool)
+	for r := 0; r < numGoroutines; r++ {
+		seed := r
+		go func() {
+			for i := 0; i < numFetchesPerGoroutine; i++ {
+				keyNum := ((i + 1) * seed) % numKeys
+				key := fmt.Sprintf("%d", keyNum)
+				cache.Get(key)
+			}
+			quit <- true
+		}()
+	}
+	for r := 0; r < numGoroutines; r++ {
+		<-quit
+	}
+	if fetchCount != numKeys {
+		t.Errorf("Should have fetched %d times, but got %d", numKeys, fetchCount)
+	}
+}
+
 // Constructs a new item with the given value, which is not expected to expire
 // soon.
 func newItem(value interface{}) Cacheable {
