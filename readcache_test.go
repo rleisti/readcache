@@ -1,8 +1,10 @@
 package readcache
 
 import (
+	"fmt"
 	"testing"
 	"time"
+	"sync"
 )
 
 func TestGet_Once_WithNilValue_ShouldReturnNil(t *testing.T) {
@@ -63,6 +65,40 @@ func TestGet_Twice_WithExpiration_ShouldFetchTwice(t *testing.T) {
 	cache.Get("key")
 	if fetchCount != 2 {
 		t.Errorf("Should have fetched twice, but got %d", fetchCount)
+	}
+}
+
+func TestGet_ConcurrentReads_WithLongExpiration_ShouldFetchOncePerKey(t *testing.T) {
+	numGoroutines := 32
+	numKeys := 512
+	numFetchesPerGoroutine := 2048
+
+	fetchLock := new(sync.Mutex)
+	fetchCount := 0
+	getter := func(key string) Cacheable {
+		fetchLock.Lock()
+		fetchCount++
+		fetchLock.Unlock()
+		return newItem("foo")
+	}
+	cache := New(getter)
+	quit := make(chan bool)
+	for r := 0; r < numGoroutines; r++ {
+		seed := r
+		go func() {
+			for i := 0; i < numFetchesPerGoroutine; i++ {
+				keyNum := ((i + 1) * seed) % numKeys
+				key := fmt.Sprintf("%d", keyNum)
+				cache.Get(key)
+			}
+			quit <- true
+		}()
+	}
+	for r := 0; r < numGoroutines; r++ {
+		<-quit
+	}
+	if fetchCount != numKeys {
+		t.Errorf("Should have fetched %d times, but got %d", numKeys, fetchCount)
 	}
 }
 
