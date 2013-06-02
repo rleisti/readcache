@@ -2,8 +2,6 @@
 Package readcache implements a read-through cache where the caller supplies
 the means to read-through in the form of a function.
 
-TODO: Add a mechanism for allowing the getter to return an error instead of an item
-
 TODO: Add a maximum size; enforce with an LRU algorithm
 
 TODO: Add a test for concurrent performance
@@ -11,20 +9,9 @@ TODO: Add a test for concurrent performance
 package readcache
 
 import (
-	"errors"
-	"fmt"
 	"sync"
 	"time"
 )
-
-// Type cacheable is something that may be stored in a cache
-type cacheable struct {
-	// The item in the cache
-	Value interface{}
-
-	// The time at which this item should expire from the cache.
-	ExpiresAt time.Time
-}
 
 // Type Cache defines a read-through cache.
 type Cache interface {
@@ -36,7 +23,23 @@ type Cache interface {
 
 // Constructs a new cache
 func New(getter func(string) (interface{}, time.Time, error)) Cache {
-	return &readcache{getter, make(map[string]*cacheable), make(map[string]*sync.Once), new(sync.RWMutex), new(sync.RWMutex)}
+	return &readcache{getter, make(map[string]*cacheable), make(map[string]*readControl), new(sync.RWMutex), new(sync.RWMutex)}
+}
+
+// Type cacheable is something that may be stored in a cache
+type cacheable struct {
+	// The item in the cache
+	Value interface{}
+
+	// The time at which this item should expire from the cache.
+	ExpiresAt time.Time
+}
+
+// Type readControl is a mechanism for controlling concurrent fetches
+type readControl struct {
+	Controller *sync.Once
+	Result     *cacheable
+	Error      error
 }
 
 // Type readcache implements the Cache interface
@@ -48,7 +51,7 @@ type readcache struct {
 	Cache map[string]*cacheable
 
 	// Controls read of items from the getter; prevents multiple concurrent reads of the same item.
-	ReadControls map[string]*sync.Once
+	ReadControls map[string]*readControl
 
 	// Locks the entire cache for reads or writes
 	CacheLock *sync.RWMutex
@@ -109,11 +112,11 @@ func getFromCache(c *readcache, key string) (*cacheable, bool) {
 // the cache before a lock is acquired, so this function may return a cached
 // value instead.  If so, the third return value will be true.  Otherwise, a
 // read control is returned and the third value is false.
-func getReadControl(c *readcache, key string) (readControl *sync.Once, cachedItem *cacheable, gotCachedItem bool) {
+func getReadControl(c *readcache, key string) (control *readControl, cachedItem *cacheable, gotCachedItem bool) {
 	gotCachedItem = false
 
 	c.ReadControlsLock.RLock()
-	readControl, ok := c.ReadControls[key]
+	control, ok := c.ReadControls[key]
 	c.ReadControlsLock.RUnlock()
 	if !ok {
 		c.ReadControlsLock.Lock()
@@ -134,10 +137,10 @@ func getReadControl(c *readcache, key string) (readControl *sync.Once, cachedIte
 			return
 		}
 
-		readControl, ok = c.ReadControls[key]
+		control, ok = c.ReadControls[key]
 		if !ok {
-			readControl = new(sync.Once)
-			c.ReadControls[key] = readControl
+			control = &readControl{new(sync.Once), nil, nil}
+			c.ReadControls[key] = control
 		}
 		c.ReadControlsLock.Unlock()
 	}
@@ -149,9 +152,8 @@ func getReadControl(c *readcache, key string) (readControl *sync.Once, cachedIte
 // The read control may prevent this goroutine from fetching the value if
 // some other routine gets to it first.  In either case, the resulting
 // fetched value is returned.
-func doFetch(c *readcache, key string, readControl *sync.Once) (cachedValue *cacheable, err error) {
-	fetchedValue := false
-	readControl.Do(func() {
+func doFetch(c *readcache, key string, readControl *readControl) (cachedValue *cacheable, err error) {
+	readControl.Controller.Do(func() {
 		defer func() {
 			c.ReadControlsLock.Lock()
 			delete(c.ReadControls, key)
@@ -161,26 +163,19 @@ func doFetch(c *readcache, key string, readControl *sync.Once) (cachedValue *cac
 		var value interface{}
 		var expiresAt time.Time
 		value, expiresAt, err = c.Getter(key)
-		fetchedValue = true
 		if err == nil {
 			cachedValue = &cacheable{value, expiresAt}
+			readControl.Result = cachedValue
 			c.CacheLock.Lock()
 			c.Cache[key] = cachedValue
 			c.CacheLock.Unlock()
+		} else {
+			readControl.Error = err
 		}
 	})
 
-	if !fetchedValue {
-		ok := false
-		c.CacheLock.RLock()
-		cachedValue, ok = c.Cache[key]
-		c.CacheLock.RUnlock()
-
-		// An error may have occured during the fetch
-		if !ok {
-			err = errors.New(fmt.Sprintf("An error occured during a concurrent fetch for '%s'", key))
-		}
-	}
+	cachedValue = readControl.Result
+	err = readControl.Error
 
 	return
 }

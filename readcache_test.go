@@ -112,7 +112,7 @@ func TestGet_ConcurrentReads_StartingWithExpiredItems_ShouldFetchOncePerKey(t *t
 	}
 }
 
-func TestGet_ErrorInGetter_ShouldReturnErrorFromCache(t *testing.T) {
+func TestGet_ErrorInGetter_ShouldReturnError(t *testing.T) {
 	getter := func(key string) (interface{}, time.Time, error) {
 		return nil, time.Now(), errors.New("Error message")
 	}
@@ -122,6 +122,41 @@ func TestGet_ErrorInGetter_ShouldReturnErrorFromCache(t *testing.T) {
 		t.Error("An error should have been returned")
 	} else if err.Error() != "Error message" {
 		t.Errorf("Expected 'Error message' but got '%s'", err.Error())
+	}
+}
+
+func TestGet_ErrorInGetter_ConcurrentReads_ShouldReturnError(t *testing.T) {
+	getter := func(key string) (interface{}, time.Time, error) {
+		return nil, time.Now(), errors.New("Error message")
+	}
+	cache := New(getter)
+	quit := make(chan bool)
+	missingError := false
+	stateLock := new(sync.Mutex)
+	for r := 0; r < 32; r++ {
+		seed := r
+		go func() {
+			for i := 0; i < 2048; i++ {
+				keyNum := ((i + 1) * seed) % 512
+				key := fmt.Sprintf("%d", keyNum)
+				_, err := cache.Get(key)
+				if err == nil {
+					stateLock.Lock()
+					missingError = true
+					stateLock.Unlock()
+				} else if err.Error() != "Error message" {
+					t.Errorf("Unexpected error result: %s", err.Error())
+				}
+			}
+			quit <- true
+		}()
+	}
+	for r := 0; r < 32; r++ {
+		<-quit
+	}
+
+	if missingError {
+		t.Error("Get did not return an error")
 	}
 }
 
