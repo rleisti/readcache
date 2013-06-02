@@ -77,7 +77,7 @@ func TestGet_ConcurrentReads_WithLongExpiration_ShouldFetchOncePerKey(t *testing
 	cache := New(getter)
 
 	numKeys := 32
-	runConcurrencyTestWithSingleFetch(t, cache, numKeys)
+	runConcurrencyTest(cache, numKeys)
 	if fetchCount != numKeys {
 		t.Errorf("Should have fetched %d times, but got %d", numKeys, fetchCount)
 	}
@@ -106,7 +106,7 @@ func TestGet_ConcurrentReads_StartingWithExpiredItems_ShouldFetchOncePerKey(t *t
 	}
 	prime = false
 
-	runConcurrencyTestWithSingleFetch(t, cache, numKeys)
+	runConcurrencyTest(cache, numKeys)
 	if fetchCount != numKeys {
 		t.Errorf("Should have fetched %d times, but got %d", numKeys, fetchCount)
 	}
@@ -131,8 +131,6 @@ func TestGet_ErrorInGetter_ConcurrentReads_ShouldReturnError(t *testing.T) {
 	}
 	cache := New(getter)
 	quit := make(chan bool)
-	missingError := false
-	stateLock := new(sync.Mutex)
 	for r := 0; r < 32; r++ {
 		seed := r
 		go func() {
@@ -141,9 +139,7 @@ func TestGet_ErrorInGetter_ConcurrentReads_ShouldReturnError(t *testing.T) {
 				key := fmt.Sprintf("%d", keyNum)
 				_, err := cache.Get(key)
 				if err == nil {
-					stateLock.Lock()
-					missingError = true
-					stateLock.Unlock()
+					t.Error("Get did not return an error")
 				} else if err.Error() != "Error message" {
 					t.Errorf("Unexpected error result: %s", err.Error())
 				}
@@ -154,13 +150,17 @@ func TestGet_ErrorInGetter_ConcurrentReads_ShouldReturnError(t *testing.T) {
 	for r := 0; r < 32; r++ {
 		<-quit
 	}
-
-	if missingError {
-		t.Error("Get did not return an error")
-	}
 }
 
-func runConcurrencyTestWithSingleFetch(t *testing.T, cache Cache, numKeys int) {
+func BenchmarkGet_Concurrent_Performance(t *testing.B) {
+	getter := func(key string) (interface{}, time.Time, error) {
+		return "foo", time.Now().Add(100e9), nil
+	}
+	cache := New(getter)
+	runConcurrencyTest(cache, 256)
+}
+
+func runConcurrencyTest(cache Cache, numKeys int) {
 	numGoroutines := 32
 	numFetchesPerGoroutine := numKeys * 4
 

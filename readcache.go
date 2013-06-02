@@ -1,10 +1,6 @@
 /*
 Package readcache implements a read-through cache where the caller supplies
 the means to read-through in the form of a function.
-
-TODO: Add a maximum size; enforce with an LRU algorithm
-
-TODO: Add a test for concurrent performance
 */
 package readcache
 
