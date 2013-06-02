@@ -1,5 +1,7 @@
 /*
 Package readcache implements a read-through cache. Items are fetched by a user-provided function.
+
+This cache is designed for concurrency, and guarantees that concurrent access to an item only results in a single fetch.
 */
 package readcache
 
