@@ -73,7 +73,11 @@ func (c *readcache) Get(key string) (interface{}, error) {
 	}
 
 	cachedValue, err := doFetch(c, key, readControl)
-	return cachedValue.Value, err
+	if cachedValue != nil {
+		return cachedValue.Value, err
+	} else {
+		return nil, err
+	}
 }
 
 // Attempt to retrieve an item from the cache, if it exists and hasn't expired.
@@ -154,7 +158,9 @@ func doFetch(c *readcache, key string, readControl *sync.Once) (cachedValue *cac
 			c.ReadControlsLock.Unlock()
 		}()
 
-		value, expiresAt, err := c.Getter(key)
+		var value interface{}
+		var expiresAt time.Time
+		value, expiresAt, err = c.Getter(key)
 		fetchedValue = true
 		if err == nil {
 			cachedValue = &cacheable{value, expiresAt}
@@ -170,7 +176,7 @@ func doFetch(c *readcache, key string, readControl *sync.Once) (cachedValue *cac
 		cachedValue, ok = c.Cache[key]
 		c.CacheLock.RUnlock()
 
-		// An error may have occured during the fetch; if so then retry.
+		// An error may have occured during the fetch
 		if !ok {
 			err = errors.New(fmt.Sprintf("An error occured during a concurrent fetch for '%s'", key))
 		}

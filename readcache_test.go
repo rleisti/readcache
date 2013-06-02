@@ -1,6 +1,7 @@
 package readcache
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -8,12 +9,12 @@ import (
 )
 
 func TestGet_Once_WithNilValue_ShouldReturnNil(t *testing.T) {
-	cache := New(func(key string) (interface{}, time.Time, error) { return nil, time.Now().Add(100e9), nil })
+	cache := New(newGetter(nil, 100e9))
 	cache.Get("key")
 }
 
 func TestGet_Once_WithSomeValue_ShouldReturnValue(t *testing.T) {
-	cache := New(func(key string) (interface{}, time.Time, error) { return "foo", time.Now().Add(100e9), nil })
+	cache := New(newGetter("foo", 100e9))
 	result, _ := cache.Get("key")
 	if result == nil {
 		t.Error("Something should have been returned.")
@@ -24,7 +25,7 @@ func TestGet_Once_WithSomeValue_ShouldReturnValue(t *testing.T) {
 }
 
 func TestGet_Twice_WithSomeValue_ShouldReturnValue(t *testing.T) {
-	cache := New(func(key string) (interface{}, time.Time, error) { return "foo", time.Now().Add(100e9), nil })
+	cache := New(newGetter("foo", 100e9))
 	cache.Get("key")
 	result, _ := cache.Get("key")
 	if result == nil {
@@ -111,6 +112,19 @@ func TestGet_ConcurrentReads_StartingWithExpiredItems_ShouldFetchOncePerKey(t *t
 	}
 }
 
+func TestGet_ErrorInGetter_ShouldReturnErrorFromCache(t *testing.T) {
+	getter := func(key string) (interface{}, time.Time, error) {
+		return nil, time.Now(), errors.New("Error message")
+	}
+	cache := New(getter)
+	_, err := cache.Get("key")
+	if err == nil {
+		t.Error("An error should have been returned")
+	} else if err.Error() != "Error message" {
+		t.Errorf("Expected 'Error message' but got '%s'", err.Error())
+	}
+}
+
 func runConcurrencyTestWithSingleFetch(t *testing.T, cache Cache, numKeys int) {
 	numGoroutines := 32
 	numFetchesPerGoroutine := numKeys * 4
@@ -129,5 +143,11 @@ func runConcurrencyTestWithSingleFetch(t *testing.T, cache Cache, numKeys int) {
 	}
 	for r := 0; r < numGoroutines; r++ {
 		<-quit
+	}
+}
+
+func newGetter(item interface{}, expirationDelta time.Duration) func(string) (interface{}, time.Time, error) {
+	return func(key string) (interface{}, time.Time, error) {
+		return item, time.Now().Add(expirationDelta), nil
 	}
 }
