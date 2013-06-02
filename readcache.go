@@ -1,6 +1,5 @@
 /*
-Package readcache implements a read-through cache where the caller supplies
-the means to read-through in the form of a function.
+Package readcache implements a read-through cache. Items are fetched by a user-provided function.
 */
 package readcache
 
@@ -17,7 +16,8 @@ type Cache interface {
 	Get(key string) (interface{}, error)
 }
 
-// Constructs a new cache
+// Constructs a new cache.  The item fetcher may return an item of type interface {} with an
+// expiration time, or it may return an error.  If an error is returned, then all other return values are ignored.
 func New(getter func(string) (interface{}, time.Time, error)) Cache {
 	return &readcache{getter, make(map[string]*cacheable), make(map[string]*readControl), new(sync.RWMutex), new(sync.RWMutex)}
 }
