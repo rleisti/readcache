@@ -152,6 +152,39 @@ func TestGet_ErrorInGetter_ConcurrentReads_ShouldReturnError(t *testing.T) {
 	}
 }
 
+func TestGet_WithPurgeRules_ShouldPurgeOldEntries(t *testing.T) {
+	fetchCount := 0
+	getter := func(key string) (interface{}, time.Time, error) {
+		fetchCount++
+		return "foo", time.Now().Add(100e9), nil
+	}
+	cache := New(getter)
+	cache.SetPurgeAt(3)
+	cache.SetPurgeTo(1)
+
+	cache.Get("1")
+	cache.Get("2")
+	cache.Get("1")
+	cache.Get("2")
+	if fetchCount != 2 {
+		t.Errorf("Expected fetchCount = 2 but was %d", fetchCount)
+	}
+	cache.Get("3")
+	cache.Get("3")
+	if fetchCount != 3 {
+		t.Errorf("Expected fetchCount = 3 but was %d", fetchCount)
+	}
+	cache.Get("1")
+	cache.Get("2")
+	if fetchCount != 5 {
+		t.Errorf("Expected fetchCount = 5 but was %d", fetchCount)
+	}
+	cache.Get("3")
+	if fetchCount != 6 {
+		t.Errorf("Expected fetchCount = 6 but was %d", fetchCount)
+	}
+}
+
 func BenchmarkGet_Concurrent_Performance(t *testing.B) {
 	getter := func(key string) (interface{}, time.Time, error) {
 		return "foo", time.Now().Add(100e9), nil

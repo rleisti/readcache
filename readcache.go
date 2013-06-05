@@ -6,6 +6,7 @@ This cache is designed for concurrency, and guarantees that concurrent access to
 package readcache
 
 import (
+	"container/list"
 	"sync"
 	"time"
 )
@@ -18,10 +19,22 @@ type Cache interface {
 	Get(key string) (interface{}, error)
 }
 
+// Type Cache adds configurable settings to a Cache
+type CacheWithSettings interface {
+	Cache
+
+	// Configure the cache size at which the cache will be purged
+	SetPurgeAt(purgeAt int64)
+
+	// Configure the resulting size of the cache after a purge.
+	// This value should be smaller than the configured value for PurgeAt
+	SetPurgeTo(purgeTo int64)
+}
+
 // Constructs a new cache.  The item fetcher may return an item of type interface {} with an
 // expiration time, or it may return an error.  If an error is returned, then all other return values are ignored.
-func New(getter func(string) (interface{}, time.Time, error)) Cache {
-	return &readcache{getter, make(map[string]*cacheable), make(map[string]*readControl), new(sync.RWMutex), new(sync.RWMutex)}
+func New(getter func(string) (interface{}, time.Time, error)) CacheWithSettings {
+	return &readcache{getter, make(map[string]*cacheable), make(map[string]*readControl), new(sync.RWMutex), new(sync.RWMutex), 0, 0, list.New()}
 }
 
 // Type cacheable is something that may be stored in a cache
@@ -56,6 +69,15 @@ type readcache struct {
 
 	// Locks the read control manifest for reads or writes
 	ReadControlsLock *sync.RWMutex
+
+	// The cache size at which the cache will be purged
+	PurgeAt int64
+
+	// The resulting size of the cache after a purge.
+	PurgeTo int64
+
+	// A history of item additions, used to determine which items to purge.
+	History *list.List
 }
 
 // Get an item from the cache, retrieving the item from the getter if necessary.
@@ -79,6 +101,14 @@ func (c *readcache) Get(key string) (interface{}, error) {
 	} else {
 		return nil, err
 	}
+}
+
+func (c *readcache) SetPurgeAt(purgeAt int64) {
+	c.PurgeAt = purgeAt
+}
+
+func (c *readcache) SetPurgeTo(purgeTo int64) {
+	c.PurgeTo = purgeTo
 }
 
 // Attempt to retrieve an item from the cache, if it exists and hasn't expired.
@@ -163,10 +193,25 @@ func doFetch(c *readcache, key string, readControl *readControl) (cachedValue *c
 		value, expiresAt, err = c.Getter(key)
 		if err == nil {
 			cachedValue = &cacheable{value, expiresAt}
+			c.History.PushFront(key)
 			readControl.Result = cachedValue
 			c.CacheLock.Lock()
 			c.Cache[key] = cachedValue
 			c.CacheLock.Unlock()
+
+			historyCount := int64(c.History.Len())
+			if c.PurgeAt > 0 && historyCount >= c.PurgeAt {
+				removeCount := historyCount - c.PurgeTo
+				removeItem := c.History.Back()
+				for i := int64(0); i < removeCount && removeItem != nil; i++ {
+					removeKey := removeItem.Value.(string)
+					delete(c.Cache, removeKey)
+
+					nextItem := removeItem.Prev()
+					c.History.Remove(removeItem)
+					removeItem = nextItem
+				}
+			}
 		} else {
 			readControl.Error = err
 		}
