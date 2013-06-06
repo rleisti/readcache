@@ -24,17 +24,17 @@ type CacheWithSettings interface {
 	Cache
 
 	// Configure the cache size at which the cache will be purged
-	SetPurgeAt(purgeAt int64)
+	SetPurgeAt(purgeAt int)
 
 	// Configure the resulting size of the cache after a purge.
 	// This value should be smaller than the configured value for PurgeAt
-	SetPurgeTo(purgeTo int64)
+	SetPurgeTo(purgeTo int)
 }
 
 // Constructs a new cache.  The item fetcher may return an item of type interface {} with an
 // expiration time, or it may return an error.  If an error is returned, then all other return values are ignored.
 func New(getter func(string) (interface{}, time.Time, error)) CacheWithSettings {
-	return &readcache{getter, make(map[string]*cacheable), make(map[string]*readControl), new(sync.RWMutex), new(sync.RWMutex), 0, 0, list.New()}
+	return &readcache{getter, make(map[string]*cacheable), make(map[string]*readControl), new(sync.RWMutex), new(sync.RWMutex), 0, 0, list.New(), 0}
 }
 
 // Type cacheable is something that may be stored in a cache
@@ -71,13 +71,16 @@ type readcache struct {
 	ReadControlsLock *sync.RWMutex
 
 	// The cache size at which the cache will be purged
-	PurgeAt int64
+	PurgeAt int
 
 	// The resulting size of the cache after a purge.
-	PurgeTo int64
+	PurgeTo int
 
 	// A history of item additions, used to determine which items to purge.
 	History *list.List
+
+	// The number of items in the history
+	HistoryCount int
 }
 
 // Get an item from the cache, retrieving the item from the getter if necessary.
@@ -103,11 +106,11 @@ func (c *readcache) Get(key string) (interface{}, error) {
 	}
 }
 
-func (c *readcache) SetPurgeAt(purgeAt int64) {
+func (c *readcache) SetPurgeAt(purgeAt int) {
 	c.PurgeAt = purgeAt
 }
 
-func (c *readcache) SetPurgeTo(purgeTo int64) {
+func (c *readcache) SetPurgeTo(purgeTo int) {
 	c.PurgeTo = purgeTo
 }
 
@@ -193,22 +196,24 @@ func doFetch(c *readcache, key string, readControl *readControl) (cachedValue *c
 		value, expiresAt, err = c.Getter(key)
 		if err == nil {
 			cachedValue = &cacheable{value, expiresAt}
-			c.History.PushFront(key)
 			readControl.Result = cachedValue
 			c.CacheLock.Lock()
 			c.Cache[key] = cachedValue
 			c.CacheLock.Unlock()
 
-			historyCount := int64(c.History.Len())
-			if c.PurgeAt > 0 && historyCount >= c.PurgeAt {
-				removeCount := historyCount - c.PurgeTo
+			c.History.PushFront(key)
+			c.HistoryCount++
+
+			if c.PurgeAt > 0 && c.HistoryCount >= c.PurgeAt {
+				removeCount := c.HistoryCount - c.PurgeTo
 				removeItem := c.History.Back()
-				for i := int64(0); i < removeCount && removeItem != nil; i++ {
+				for i := 0; i < removeCount && removeItem != nil; i++ {
 					removeKey := removeItem.Value.(string)
 					delete(c.Cache, removeKey)
 
 					nextItem := removeItem.Prev()
 					c.History.Remove(removeItem)
+					c.HistoryCount--
 					removeItem = nextItem
 				}
 			}

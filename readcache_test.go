@@ -169,17 +169,21 @@ func TestGet_WithPurgeRules_ShouldPurgeOldEntries(t *testing.T) {
 	if fetchCount != 2 {
 		t.Errorf("Expected fetchCount = 2 but was %d", fetchCount)
 	}
-	cache.Get("3")
+	cache.Get("3") // {1, 2, 3} -> Purge -> {3}
 	cache.Get("3")
 	if fetchCount != 3 {
 		t.Errorf("Expected fetchCount = 3 but was %d", fetchCount)
 	}
 	cache.Get("1")
-	cache.Get("2")
+	cache.Get("2") // {1, 2, 3} -> Purge -> {2}
 	if fetchCount != 5 {
 		t.Errorf("Expected fetchCount = 5 but was %d", fetchCount)
 	}
 	cache.Get("3")
+	if fetchCount != 6 {
+		t.Errorf("Expected fetchCount = 6 but was %d", fetchCount)
+	}
+	cache.Get("2")
 	if fetchCount != 6 {
 		t.Errorf("Expected fetchCount = 6 but was %d", fetchCount)
 	}
@@ -190,6 +194,16 @@ func BenchmarkGet_Concurrent_Performance(t *testing.B) {
 		return "foo", time.Now().Add(100e9), nil
 	}
 	cache := New(getter)
+	runConcurrencyTest(cache, 256)
+}
+
+func BenchmarkGet_Concurrent_Purge_Performance(t *testing.B) {
+	getter := func(key string) (interface{}, time.Time, error) {
+		return "foo", time.Now().Add(100e9), nil
+	}
+	cache := New(getter)
+	cache.SetPurgeAt(200)
+	cache.SetPurgeTo(100)
 	runConcurrencyTest(cache, 256)
 }
 
