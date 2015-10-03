@@ -91,11 +91,11 @@ func TestGet_ConcurrentReads_StartingWithExpiredItems_ShouldFetchOncePerKey(t *t
 	getter := func(key string) (interface{}, time.Time, error) {
 		if prime {
 			return "foo", expiresAt, nil
-		} else {
-			fetchLock.Lock()
-			fetchCount++
-			fetchLock.Unlock()
 		}
+
+		fetchLock.Lock()
+		fetchCount++
+		fetchLock.Unlock()
 		return "foo", time.Now().Add(100e9), nil
 	}
 	cache := New(getter)

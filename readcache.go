@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Type Cache defines a read-through cache.
+// Cache defines a read-through cache.
 type Cache interface {
 	// Retrieve an item from the cache if available, or from a
 	// backing source if it is not.
@@ -19,7 +19,7 @@ type Cache interface {
 	Get(key string) (interface{}, error)
 }
 
-// Type Cache adds configurable settings to a Cache
+// CacheWithSettings adds configurable settings to a Cache
 type CacheWithSettings interface {
 	Cache
 
@@ -31,7 +31,7 @@ type CacheWithSettings interface {
 	SetPurgeTo(purgeTo int)
 }
 
-// Constructs a new cache.  The item fetcher may return an item of type interface {} with an
+// New constructs a new cache.  The item fetcher may return an item of type interface {} with an
 // expiration time, or it may return an error.  If an error is returned, then all other return values are ignored.
 func New(getter func(string) (interface{}, time.Time, error)) CacheWithSettings {
 	return &readcache{getter, make(map[string]*cacheable), make(map[string]*readControl), new(sync.RWMutex), new(sync.RWMutex), 0, 0, list.New(), 0}
@@ -101,9 +101,9 @@ func (c *readcache) Get(key string) (interface{}, error) {
 	cachedValue, err := doFetch(c, key, readControl)
 	if cachedValue != nil {
 		return cachedValue.Value, err
-	} else {
-		return nil, err
 	}
+
+	return nil, err
 }
 
 func (c *readcache) SetPurgeAt(purgeAt int) {
