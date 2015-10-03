@@ -77,7 +77,7 @@ func TestGet_ConcurrentReads_WithLongExpiration_ShouldFetchOncePerKey(t *testing
 	cache := New(getter)
 
 	numKeys := 32
-	runConcurrencyTest(cache, numKeys)
+	runConcurrencyTest(cache, numKeys, numKeys)
 	if fetchCount != numKeys {
 		t.Errorf("Should have fetched %d times, but got %d", numKeys, fetchCount)
 	}
@@ -106,7 +106,7 @@ func TestGet_ConcurrentReads_StartingWithExpiredItems_ShouldFetchOncePerKey(t *t
 	}
 	prime = false
 
-	runConcurrencyTest(cache, numKeys)
+	runConcurrencyTest(cache, numKeys, numKeys)
 	if fetchCount != numKeys {
 		t.Errorf("Should have fetched %d times, but got %d", numKeys, fetchCount)
 	}
@@ -194,7 +194,7 @@ func BenchmarkGet_Concurrent_Performance(t *testing.B) {
 		return "foo", time.Now().Add(100e9), nil
 	}
 	cache := New(getter)
-	runConcurrencyTest(cache, 256)
+	runConcurrencyTest(cache, 8, t.N)
 }
 
 func BenchmarkGet_Concurrent_Purge_Performance(t *testing.B) {
@@ -204,18 +204,23 @@ func BenchmarkGet_Concurrent_Purge_Performance(t *testing.B) {
 	cache := New(getter)
 	cache.SetPurgeAt(200)
 	cache.SetPurgeTo(100)
-	runConcurrencyTest(cache, 256)
+	runConcurrencyTest(cache, 8, t.N)
 }
 
-func runConcurrencyTest(cache Cache, numKeys int) {
-	numGoroutines := 32
-	numFetchesPerGoroutine := numKeys * 4
+func runConcurrencyTest(cache Cache, numGoroutines int, numFetches int) {
+	numFetchesPerGoroutine := numFetches / numGoroutines
+	remainingFetches := numFetches % numGoroutines
+	numKeys := numFetches
 
 	quit := make(chan bool)
 	for r := 0; r < numGoroutines; r++ {
 		seed := r
 		go func() {
-			for i := 0; i < numFetchesPerGoroutine; i++ {
+			var numFetchesForThis = numFetchesPerGoroutine
+			if r == (numGoroutines - 1) {
+				numFetchesForThis += remainingFetches
+			}
+			for i := 0; i < numFetchesForThis; i++ {
 				keyNum := ((i + 1) * seed) % numKeys
 				key := fmt.Sprintf("%d", keyNum)
 				cache.Get(key)
