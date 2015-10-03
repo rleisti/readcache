@@ -205,7 +205,7 @@ func doFetch(c *readcache, key string, readControl *readControl) (cachedValue *c
 			c.HistoryCount++
 
 			if c.PurgeAt > 0 && c.HistoryCount >= c.PurgeAt {
-        c.CacheLock.Lock()
+				c.CacheLock.Lock()
 				removeCount := c.HistoryCount - c.PurgeTo
 				removeItem := c.History.Back()
 				for i := 0; i < removeCount && removeItem != nil; i++ {
@@ -217,7 +217,7 @@ func doFetch(c *readcache, key string, readControl *readControl) (cachedValue *c
 					c.HistoryCount--
 					removeItem = nextItem
 				}
-        c.CacheLock.Unlock()
+				c.CacheLock.Unlock()
 			}
 		} else {
 			readControl.Error = err
